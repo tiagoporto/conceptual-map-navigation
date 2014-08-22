@@ -1,4 +1,3 @@
-
 	function resizePanel() {
 		//get the browser width and height
 		width = $(window).width();
@@ -12,7 +11,7 @@
 		$('#is-mask').css({width: mask_width, height: height});
 
 		//if the item is displayed incorrectly, set it to the corrent pos
-		divWrapper.scrollTo($('a.js-selected').attr('href'), 0);
+		$_divWrapper.scrollTo($('a.js-selected').attr('href'), 0);
 	}
 
 	//resize all the items according to the new browser size

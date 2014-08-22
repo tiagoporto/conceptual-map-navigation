@@ -1,14 +1,6 @@
-	changeURL();
-
-	var buttonScrollTo = $('.js-scroll-to');
-
-	var divWrapper = $('#is-wrapper');
-
-	var allLinksScroll = $('a.js-scroll-to');
-
-	buttonScrollTo.click(function (){
+	$_buttonScrollTo.click(function (){
 		//reset and highlight the clicked link
-		allLinksScroll.removeClass('selected');
+		$_allLinksScroll.removeClass('selected');
 		$(this).addClass('selected');
 
 		//grab the current item, to be used in resize function
@@ -29,13 +21,13 @@
 			//Acrescenta o atributo href do link no array e rola até o id
 			path.push(link.attr('href'));
 
-			divWrapper.scrollTo(link.attr('href'), 700);
+			$_divWrapper.scrollTo(link.attr('href'), 700);
 		}else if(link.hasClass('js-continue-path')){
 			//Acrescenta o path anterior e atributo href do link no array e rola caminho por caminho até o id
 			path.push(link.attr('data-path'), link.attr('href'));
 
 			for(i = path.length - 2; i < path.length; i++){
-				divWrapper.scrollTo($('' + path[i] + ''), 700);
+				$_divWrapper.scrollTo($('' + path[i] + ''), 700);
 			}
 		}else if(link.hasClass('js-return-path')){
 			//Retorna caminho do array
@@ -43,14 +35,14 @@
 			for(i = path.length - 2; i >= 0; i--){
 				path.pop();
 
-				divWrapper.scrollTo($('' + path[i] + ''), 700);
+				$_divWrapper.scrollTo($('' + path[i] + ''), 700);
 
 				if(i == 0){
 					path = new Array();
 
 					path.push(link.attr('data-path'), link.attr('href'));
 
-					divWrapper.scrollTo(link.attr('href'), 700);
+					$_divWrapper.scrollTo(link.attr('href'), 700);
 
 					if(link.attr('href') == "#formacao-professor-autor"){
 						path = new Array();
@@ -64,7 +56,7 @@
 		}else{
 			path.push(link.attr('data-path'), link.attr('href'));
 
-			divWrapper.scrollTo(link.attr('href'), 700);
+			$_divWrapper.scrollTo(link.attr('href'), 700);
 		}
 		//console.log(path);
 	}

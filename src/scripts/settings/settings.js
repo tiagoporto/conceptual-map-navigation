@@ -6,8 +6,9 @@ var path = new Array(), //Caminho percorrido
 	url = window.location,
 	url = url.toString(),
 
-	linkHome = "#home",
-	linkPage1 = "#page1",
+	linkHome = "#home";
+
+window.linkPage1 = "#page1",
 	linkPage11 = "#page11",
 	linkPage12 = "#page12",
 	linkPage13 = "#page13",

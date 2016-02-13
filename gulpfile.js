@@ -1,206 +1,489 @@
 /*
-	My gulp.js template
-	Version: 1.2.1
-	Author: Tiago Porto - http://www.tiagoporto.com
-	https://github.com/tiagoporto
-	Contact: me@tiagoporto.com
+* Swill Boilerplate v4.3.1
+* https://github.com/tiagoporto/swill-boilerplate
+* Copyright (c) 2014-2015 Tiago Porto (http://tiagoporto.com)
+* Released under the MIT license
 */
 
-//************************* Load dependencies ****************************//
+'use strict';
 
-var		  gulp = require('gulp'),
-		uglify = require('gulp-uglify'),
-	  imagemin = require('gulp-imagemin'),
-		svgmin = require('gulp-svgmin'),
-		rename = require('gulp-rename'),
-		 clean = require('gulp-clean'),
-		concat = require('gulp-concat'),
-		notify = require('gulp-notify'),
-	   compass = require('gulp-compass'),
-		  path = require('path'),
-		 watch = require('gulp-watch'),
-   runSequence = require('run-sequence'),
-	livereload = require('gulp-livereload'),
-			lr = require('tiny-lr'),
-		server = lr();
+var         args = require('yargs').argv,
+     browserSync = require('browser-sync'),
+          buffer = require('vinyl-buffer'),
+          config = require('./config.json'),
+             del = require('del'),
+              fs = require('fs'),
+         ghPages = require('gulp-gh-pages'),
+            gulp = require('gulp'),
+           merge = require('merge-stream'),
+         plugins = require('gulp-load-plugins')(),
+        sequence = require('run-sequence'),
+     spritesmith = require('gulp.spritesmith'),
+       svgSprite = require('gulp-svg-sprite'),
+      vinylPaths = require('vinyl-paths'),
+           Karma = require('karma').Server,
+         jasmine = require('gulp-jasmine'),
 
 //***************************** Path configs *****************************//
 
-var			public_path = 'public/', // public files
-   global_public_images = public_path + 'img', //root public images directory
-   	 current_path_images = '/', //current image path
-		  public_images = public_path + 'img' + current_path_images, // optimized images
-		  public_styles = public_path + 'css', // minified styles
-		 public_scripts = public_path + 'js', // concat and minify scripts
-			  sass_path = 'src/stylesheets/', // sass files
-				js_path = 'src/scripts/', // js files
-	  global_image_path = 'src/images/', //root original images directory
-			  img_path  = global_image_path + current_path_images, // original image files
-			sprite_path = global_image_path + 'sprite-icons.png'; // sprite filename
+basePaths = config.basePaths,
+
+paths = {
+    images: {
+        src: basePaths.src + basePaths.images.src ,
+       dest: basePaths.dest + basePaths.images.dest,
+      build: basePaths.build + basePaths.images.src
+    },
+
+    sprite: {
+      src: basePaths.src + basePaths.images.src + basePaths.sprite.src
+    },
+
+    scripts: {
+        src: basePaths.src + basePaths.scripts.src,
+       dest: basePaths.dest + basePaths.scripts.dest,
+      build: basePaths.build + basePaths.scripts.dest
+    },
+
+    styles: {
+        src: basePaths.src + basePaths.styles.src,
+       dest: basePaths.dest + basePaths.styles.dest,
+      build: basePaths.build + basePaths.styles.dest
+    }
+  },
+
+//******************************* Settings *******************************//
+
+  extensionStyle = 'styl',
+  headerProject = fs.readFileSync(basePaths.src + "header-comments.txt", "utf8")
 
 //******************************** Tasks *********************************//
 
+gulp.task('coverall', function(){
+  gulp.src('coverage/**/lcov.info')
+    .pipe(plugins.coveralls());
+});
+
+gulp.task('karma', function (done) {
+  new Karma({
+    configFile: __dirname + '/karma.conf.js'
+  }, done).start();
+});
+
+gulp.task('test', function(){
+  sequence('karma', 'coverall');
+});
+
+gulp.task('styles-helpers', function(){
+     var mixins = gulp.src(paths.styles.src + 'helpers/mixins/*.{styl,scss}')
+                    .pipe(plugins.concat('_mixins.styl'))
+                    .pipe(gulp.dest(paths.styles.src + 'helpers'));
+
+  var functions = gulp.src(paths.styles.src + 'helpers/functions/*.{styl,scss}')
+                    .pipe(plugins.concat('_functions.styl'))
+                    .pipe(gulp.dest(paths.styles.src + 'helpers'));
+
+  return merge(mixins, functions);
+});
+
+gulp.task('styles', function(){
+  return  gulp.src([
+          paths.styles.src + '*.styl',
+          '!' + paths.styles.src + '_*.styl'
+        ])
+        .pipe(plugins.plumber())
+        .pipe(plugins.stylus({
+            'include css': true//,use:[koutoSwiss(), rupture()]
+          })
+          .on('error', function (err) {
+
+            console.log(err.message);
+
+            // If rename the stylus file change here
+            plugins.file('styles.css', 'body:before{white-space: pre; font-family: monospace; content: "' + err.message + '";}', { src: true })
+              .pipe(plugins.replace("\\",'/'))
+              .pipe(plugins.replace(/\n/gm,'\\A '))
+              .pipe(plugins.replace("\"",'\''))
+              .pipe(plugins.replace("content: '",'content: "'))
+              .pipe(plugins.replace("';}",'";}'))
+              .pipe(gulp.dest(paths.styles.dest))
+              .pipe(plugins.rename({suffix: '.min'}))
+              .pipe(gulp.dest(paths.styles.dest));
+          })
+        )
+        .pipe(plugins.autoprefixer({
+          browsers: config.autoprefixerBrowsers
+        }))
+        .pipe(plugins.wrapper({
+          header: headerProject + '\n'
+        }))
+        .pipe(plugins.if(config.lintCSS, plugins.csslint('./.csslintrc')))
+        .pipe(plugins.if(config.lintCSS, plugins.csslint.reporter()))
+        .pipe(gulp.dest(paths.styles.dest))
+        .pipe(plugins.csso())
+        .pipe(plugins.rename({suffix: '.min'}))
+        .pipe(gulp.dest(paths.styles.dest))
+        .pipe(plugins.notify({message: 'Styles task complete', onLast: true}));
+});
+
+// Generate Bitmap Sprite
+gulp.task('bitmap-sprite', function () {
+  var sprite = gulp.src(paths.sprite.src + '**/*.png')
+          .pipe(plugins.plumber())
+          .pipe(
+            spritesmith({
+              imgName: 'bitmap-sprite.png',
+              cssName: "_bitmap-sprite." + extensionStyle,
+              cssOpts: {
+                cssSelector: function (item) {
+                  if (item.name.indexOf('~hover') !== -1) {
+                    return '.icon-' + item.name.replace('~hover', ':hover');
+                  }
+                  else {
+                    return '.icon-' + item.name;
+                  }
+                }
+              },
+              imgPath: '../' + basePaths.images.dest + 'bitmap-sprite.png',
+              padding: 2,
+              algorithm: 'top-down'
+            })
+          );
+
+  sprite.img
+    .pipe(buffer())
+    .pipe(plugins.imagemin())
+    .pipe(gulp.dest(paths.images.dest));
+  sprite.css
+    .pipe(gulp.dest(paths.styles.src + 'helpers'))
+    .pipe(plugins.notify({message: 'Bitmap sprite task complete', onLast: true}));
+
+  return sprite;
+});
+
+// Generate SVG Sprite
+gulp.task('vetor-sprite', function() {
+  var spriteOptions = {
+          shape: {
+            spacing: {
+              padding: 2
+            }
+          },
+          mode : {
+            css : {
+              prefix: ".icon-%s",
+              dest: './',
+              sprite: '../' + basePaths.images.dest + 'vetor-sprite.svg',
+              layout: 'vertical',
+              bust: false,
+              render: {}
+            },
+          }
+        };
+
+  spriteOptions.mode.css.render[extensionStyle] =  {};
+
+  spriteOptions.mode.css.render[extensionStyle].dest =  '../../' + paths.styles.src + 'helpers/_vetor-sprite.' + extensionStyle;
+
+  return gulp.src(paths.sprite.src + '*.svg')
+        .pipe(plugins.plumber())
+        .pipe(svgSprite(spriteOptions))
+        .pipe(gulp.dest(paths.images.dest))
+        .pipe(plugins.notify({message: 'SVG sprite task complete', onLast: true}));
+});
+
+//Fallback convert SVG to PNG
+gulp.task('svg2png', function () {
+  return gulp.src(paths.images.dest + 'vetor-sprite.svg')
+        .pipe(plugins.plumber())
+        .pipe(plugins.svg2png())
+        .pipe(gulp.dest(paths.images.dest));
+});
+
 // Optimize Images
-gulp.task('images', function() {
-	gulp.src([
-			img_path + '*.{png,jpg,gif}',
-			'!' + img_path + '/icons/*', '!' + sprite_path
-		])
-		.pipe(imagemin({optimizationLevel: 5, progressive: true, cache: true}))
-		.pipe(gulp.dest(public_images))
-		.pipe(livereload(server))
-		.pipe(notify({message: 'Images task complete'}));
+gulp.task('images', function () {
+  var images = gulp.src([
+          paths.images.src + '**/*.{bmp,gif,jpg,jpeg,png,svg}',
+          '!' + paths.sprite.src + '**/*',
+        ])
+        .pipe(plugins.plumber())
+        .pipe(plugins.newer(paths.images.dest))
+        .pipe(plugins.imagemin({optimizationLevel: 5, progressive: true}))
+        .pipe(gulp.dest(paths.images.dest));
+
+  var svg = gulp.src([
+          paths.images.src + '**/*.svg',
+          '!' + paths.sprite.src + '**/*'
+        ])
+        .pipe(plugins.plumber())
+        .pipe(plugins.newer(paths.images.dest))
+        .pipe(plugins.svg2png())
+        .pipe(gulp.dest(paths.images.dest))
+        .pipe(plugins.notify({message: 'Images task complete', onLast: true}));
+
+  return merge(images, svg)
 });
 
-// Optimize Sprite
-gulp.task('sprite', function() {
-	gulp.src(sprite_path)
-		.pipe(imagemin({optimizationLevel: 3, progressive: true, cache: true}))
-		.pipe(gulp.dest(global_public_images))
-		.pipe(livereload(server))
-		.pipe(notify({message: 'Sprite task complete'}));
+
+// Concatenate vendor scripts and Minify
+gulp.task('vendor-scripts', function () {
+  return gulp.src([
+          '!' + paths.scripts.src + '**/*_IGNORE.js',
+          paths.scripts.src + 'settings/google_analytics.js',
+          paths.scripts.src + 'settings/*.js'
+        ])
+        .pipe(plugins.plumber())
+        .pipe(plugins.concat('vendors.js'))
+        .pipe(gulp.dest(paths.scripts.dest))
+        .pipe(plugins.rename('vendors.min.js'))
+        .pipe(plugins.uglify())
+        .pipe(gulp.dest(paths.scripts.dest));
 });
 
-// Otimize svg Images
-gulp.task('svg-imagens', function() {
-	gulp.src(img_path + '**/*.svg')
-		.pipe(svgmin())
-		.pipe(gulp.dest(public_images))
-		.pipe(livereload(server))
-		.pipe(notify({message: 'SVG task complete'}));
+// Concatenate and Minify Main Scripts
+gulp.task('scripts', function () {
+  var concatenate = gulp.src([
+              '!' + paths.scripts.src + '**/*_SEPARATE.js',
+              '!' + paths.scripts.src + '**/*_IGNORE.js',
+              paths.scripts.src + 'vars.js',
+              paths.scripts.src + '*.js'
+            ])
+            .pipe(plugins.plumber())
+            .pipe(plugins.cached('scripts'))
+            .pipe(plugins.remember('scripts'))
+            .pipe(plugins.plumber())
+            .pipe(plugins.if(config.lintJS, plugins.eslint()))
+            .pipe(plugins.if(config.lintJS, plugins.eslint.format()))
+            .pipe(plugins.if(
+              config.es6,
+              plugins.babel({
+                presets: ['es2015']
+              })
+            ))
+            .pipe(plugins.concat('scripts.js'))
+            .pipe( plugins.if(
+              config.jQuery,
+              plugins.wrapper({
+                header: 'jQuery(document).ready(function($) {\n\n',
+                footer: '\n});'
+              })
+            ))
+            .pipe(plugins.wrapper({
+              header: headerProject + '\n'
+            }))
+            .pipe(gulp.dest(paths.scripts.dest))
+            .pipe(plugins.rename({suffix: '.min'}))
+            .pipe(plugins.uglify())
+            .pipe(gulp.dest(paths.scripts.dest));
+
+
+       var copy = gulp.src([
+              paths.scripts.src + '/*_SEPARATE.js'
+            ])
+            .pipe(plugins.plumber())
+            .pipe(plugins.newer(paths.scripts.dest))
+            .pipe(plugins.plumber())
+            .pipe(plugins.if(config.lintJS, plugins.eslint()))
+            .pipe(plugins.if(config.lintJS, plugins.eslint.format()))
+            .pipe(plugins.rename(function(path){
+              path.basename = path.basename.substring(0,  path.basename.length -9)
+            }))
+            .pipe(plugins.wrapper({
+              header: headerProject + '\n'
+            }))
+            .pipe(gulp.dest(paths.scripts.dest))
+            .pipe(plugins.rename({suffix: '.min'}))
+            .pipe(plugins.uglify({
+              preserveComments: 'some'
+            }))
+            .pipe(gulp.dest(paths.scripts.dest))
+            .pipe(plugins.notify({message: 'Scripts task complete', onLast: true}));
+
+  return merge(concatenate, copy);
 });
 
-// Execute concat-scripts, min-angular-scripts, concat-all-min-scripts and clean-scripts tasks
-gulp.task('scripts', function(callback) {
-	runSequence('concat-scripts',
-		'min-angular-scripts',
-		'concat-all-min-scripts',
-		'clean-scripts',
-		callback
-	);
+// Copy Files to Build
+gulp.task('copy', function () {
+  var  assets  = {searchPath: basePaths.dest};
+
+  // Minify and Copy HTML
+  var  html    = gulp.src([
+            basePaths.dest + '**/*.{html,php}',
+            '!' + basePaths.bower + '{,/**}'
+          ])
+            .pipe(plugins.useref(assets))
+            .pipe(plugins.if('*.js', plugins.uglify()))
+            .pipe(plugins.if('*.css', plugins.csso()))
+            .pipe(plugins.if('*.html', plugins.htmlmin({collapseWhitespace: true, spare:true, empty: true, conditionals: true})))
+            .pipe(plugins.if('*.php', plugins.htmlmin({collapseWhitespace: true, spare:true, empty: true, conditionals: true})))
+            .pipe(gulp.dest(basePaths.build));
+
+  // Copy All Other files except HTML, PHP, CSS e JS Files
+  var allFiles = gulp.src([
+              '!' + basePaths.bower + '{,/**}',
+              basePaths.dest + '**/*',
+              '!' + paths.styles.dest + '**/*',
+              '!' + paths.scripts.dest + '**/*',
+              '!' + basePaths.dest + '**/*.{html,php}'
+            ], {dot: true})
+            .pipe(gulp.dest(basePaths.build));
+
+  return merge(html, allFiles);
 });
 
-// Concat and Minify Scripts
-gulp.task('concat-scripts', function() {
-	return gulp.src([
-			js_path + 'plugins/outdatedbrowser-1.1.0.js',
-			js_path + 'libs/**',
-			js_path + 'frameworks/**',
-			js_path + 'plugins/**',
-			js_path + 'onread/open_onread.js',
-			js_path + 'settings/*',
-			js_path + 'main/*',
-			js_path + 'onread/close_onread.js'
-		])
-		.pipe(concat('main.js'))
-		.pipe(gulp.dest(public_scripts))
-		.pipe(rename('scripts.min.js'))
-		.pipe(uglify())
-		.pipe(gulp.dest(public_scripts));
+
+gulp.task('outdatedbrowser', function(){
+  if(!config.outdatedBrowser){
+
+  }else{
+    return gulp.src(basePaths.bower + '/outdated-browser/outdatedbrowser/lang/*')
+                    .pipe(gulp.dest(basePaths.dest + 'lang/outdated_browser'));
+
+  }
+})
+
+//Set the use of components
+gulp.task('set-dependencies', ['outdatedbrowser'], function(){
+
+
+  var bower_path = gulp.src('./.bowerrc')
+            .pipe(plugins.replace(/"directory" : "[a-z\/_]+"/g, '"directory" : "' + basePaths.bower + '"'))
+            .pipe(gulp.dest('./'));
+
+
+  var styles_var = gulp.src(paths.styles.src + '**/*.{styl,sass,scss}')
+            .pipe(plugins.replace(/(image-path[\s=:]+ ")[.\/a-z]+"/g, '$1../' + basePaths.images.dest + '"'))
+            .pipe(plugins.replace(/(font-path[\s=:]+ ")[.\/a-z]+"/g, '$1../' + basePaths.fonts.dest + '"'))
+            .pipe(gulp.dest(paths.styles.src));
+
 });
 
-// Concat and Minify Angular Scripts
-gulp.task('min-angular-scripts',  function() {
-	return gulp.src([
-			js_path + 'angular_scripts/**',
-		])
-		.pipe(concat('angular.min.js'))
-		.pipe(uglify({mangle: false}))
-		.pipe(gulp.dest(public_scripts));
+//*************************** Utility Tasks ******************************//
+
+gulp.task('setup', function(cb){
+  sequence('set-dependencies', cb);
 });
 
-// Concat Minified Scripts
-gulp.task('concat-all-min-scripts',  function() {
-	return gulp.src([
-			public_scripts + '/scripts.min.js',
-			public_scripts + '/angular.min.js'
-		])
-		.pipe(concat('main.min.js'))
-		.pipe(gulp.dest(public_scripts));
-});
+gulp.task('combine-assets', function () {
+  var assets   =  {searchPath: basePaths.dest};
 
-// Clean Unutilized Scripts
-gulp.task('clean-scripts', function() {
-	return gulp.src([
-			public_scripts + '/scripts.min.js',
-			public_scripts + '/angular.min.js'
-		], {read: false})
-		.pipe(clean())
-		.pipe(livereload(server))
-		.pipe(notify({message: 'Scripts task complete'}));
-});
-
-// Compile Compass
-gulp.task('compass', function() {
-	gulp.src(sass_path + '**/*.{sass,scss}')
-		.pipe(compass({
-			project: path.join(__dirname, '/'),
-			css: public_styles,
-			sass: sass_path,
-			image: global_image_path,
-			style: 'compressed', //The output style for the compiled css. Nested, expanded, compact, or compressed.
-			comments: false,
-			relative: false,
-		}))
-		.pipe(livereload(server))
-		.pipe(notify({message: 'Compass task complete'}));
+  // Minify and Copy HTML
+  return  gulp.src(basePaths.dest + '**/*.{html,php}')
+          .pipe(plugins.useref(assets))
+          .pipe(plugins.if('*.js', plugins.uglify()))
+          .pipe(plugins.if('*.css', plugins.csso()))
+          .pipe(gulp.dest(basePaths.dest));
 });
 
 // Clean Directories
-gulp.task('clean', function() {
-	return gulp.src([public_styles,
-					 public_scripts,
-					 public_images + '*'], {read: false})
-		.pipe(clean())
-		.pipe(notify({message: 'Clean task complete'}));
+gulp.task('clean', function (cb) {
+  return del([
+      basePaths.build,
+      paths.styles.dest,
+      paths.scripts.dest,
+      paths.styles.src + 'helpers/_bitmap-sprite.{styl,scss}',
+      paths.styles.src + 'helpers/_vetor-sprite.{styl,scss}',
+      paths.images.dest + '**/*',
+      // Add here the folders that will not be deleted in public/img
+      '!' + paths.images.dest + 'copyright{,**/*{,**/*}}',
+      '!' + paths.images.dest + 'logos{,**/*{,**/*}}'
+    ], cb)
 });
 
-// Reload Browser
-gulp.task('reload-browser', function() {
-	gulp.src(public_path + '**/*.{html,php}')
-		.pipe(livereload(server))
-		.pipe(notify({message: 'Reload complete'}));
+//***************************** Main Tasks *******************************//
+
+// Serve the project and watch
+gulp.task('serve', function () {
+  browserSync(config.browserSync);
+
+  gulp.watch([
+        paths.images.src + '**/*.{bmp,gif,jpg,jpeg,png,svg}',
+        '!' + paths.sprite.src + '**/*'
+      ],
+
+      ['images', browserSync.reload]
+     );
+
+  gulp.watch(
+      paths.sprite.src + '**/*.{png,gif}',
+
+      ['bitmap-sprite', browserSync.reload]
+    );
+
+  gulp.watch(
+      paths.sprite.src + '**/*.svg',
+
+      ['vetor-sprite', 'styles', browserSync.reload]
+    );
+
+  gulp.watch(
+      paths.images.dest + 'vetor-sprite.svg',
+
+      ['svg2png', browserSync.reload]
+    );
+
+  gulp.watch(
+      paths.scripts.src + '*.js',
+
+      ['scripts', browserSync.reload]
+    );
+
+  gulp.watch([
+        paths.scripts.src + 'vendor/**/*.js',
+        paths.scripts.src + 'settings/**/*.js'
+      ],
+
+      ['vendor-scripts', browserSync.reload]
+    );
+
+  gulp.watch([
+      paths.styles.src + '**/*.{styl,scss,sass}',
+      '!' + paths.styles.src + 'helpers/mixins/*.{styl,scss,sass}',
+      '!' + paths.styles.src + 'helpers/functions/*.{styl,scss,sass}'],
+
+      ['styles', browserSync.reload]
+    );
+
+  gulp.watch([
+      paths.styles.src + 'helpers/mixins/*.{styl,scss,sass}',
+      paths.styles.src + 'helpers/functions/*.{styl,scss,sass}'],
+
+      ['styles-helpers']
+    );
+
+  gulp.watch(basePaths.dest + '**/*.{html,php}', browserSync.reload);
 });
 
-// Watch
-gulp.task('watch', function() {
-	//Listen on port 35729
-	server.listen(35729, function (err) {
-		if (err) return console.log(err);
+// Clean, compile, watch and serve project
+gulp.task('default', function () {
+  if(args.compile === true){
+    sequence('clean', ['images', 'bitmap-sprite', 'vetor-sprite', 'styles-helpers', 'vendor-scripts'], 'svg2png', 'styles', 'scripts', 'serve');
 
-		// Watch .js files
-		gulp.watch(js_path + '**/*.js', function(event) {
-			gulp.run('scripts');
-		});
-
-		// Watch sass files
-		gulp.watch(sass_path + '**/*.{sass,scss}', function(event) {
-			gulp.run('compass');
-		});
-
-		// Watch .jpg .png .gif files
-		gulp.watch([img_path + '**/*.{png,jpg,gif}', '!' + sprite_path], function(event) {
-				gulp.run('images');
-		});
-
-		// Watch sprite file
-		gulp.watch(sprite_path, function(event) {
-		  gulp.run('sprite');
-		});
-
-		// Watch .svg files
-		gulp.watch(img_path + '**/*.svg', function(event) {
-		  gulp.run('svgImagens');
-		});
-
-		//Watch .html .php Files
-		gulp.watch(public_path + '**/*.{html,php}', function(){
-			gulp.run('reload-browser');
-		});
-	});
+  }else{
+    gulp.start('serve');
+  }
 });
 
-// Default task
-gulp.task('default', ['clean', 'compass', 'scripts', 'images', 'sprite', 'svg-imagens'], function() {
-	gulp.run('watch');
+// Clean and compile the project
+gulp.task('compile', function () {
+  sequence('clean', ['images', 'bitmap-sprite', 'vetor-sprite', 'styles-helpers', 'vendor-scripts'], 'svg2png', 'styles', 'scripts');
+});
+
+gulp.task('gh', function() {
+ return gulp.src( basePaths.build + '**/*')
+   .pipe(ghPages());
+});
+
+// Build the project and push the builded folder to gh-pages branch
+gulp.task('ghpages', function() {
+  sequence(['images', 'bitmap-sprite', 'vetor-sprite', 'styles-helpers', 'vendor-scripts'], 'svg2png', 'styles', 'scripts', 'copy', 'gh');
+});
+
+// Build Project and serve if pass the parameter --serve
+gulp.task('build', ['clean'], function () {
+  sequence(['images', 'bitmap-sprite', 'vetor-sprite', 'styles-helpers', 'vendor-scripts'], 'svg2png', 'styles', 'scripts', 'copy', function(){
+      if(args.serve === true){
+        browserSync(config.browserSyncBuild);
+      }
+    });
 });
